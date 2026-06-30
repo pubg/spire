@@ -39,7 +39,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build spire-server image
-        run: make spire-server-image TAG="datadog-${GITHUB_SHA::12}"
+        run: make spire-server-image TAG="1.14.5-datadog.${GITHUB_SHA::12}"
 
       - name: Push spire-server image
         run: |
