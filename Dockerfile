@@ -60,7 +60,7 @@ ARG spire_binary
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     if [ "$TARGETARCH" = "arm64" ]; then CC=aarch64-alpine-linux-musl; elif [ "$TARGETARCH" = "s390x" ]; then CC=s390x-alpine-linux-musl; fi && \
-    if [ -n "$spire_binary" ]; then make build-static git_tag=$TAG git_dirty="" binaries="$spire_binary"; else make build-static git_tag=$TAG git_dirty=""; fi && \
+    if [ -n "$spire_binary" ]; then make build-static DATADOG_INSTRUMENTATION="$datadog_instrumentation" git_tag=$TAG git_dirty="" binaries="$spire_binary"; else make build-static DATADOG_INSTRUMENTATION="$datadog_instrumentation" git_tag=$TAG git_dirty=""; fi && \
     for f in $(find bin -executable -type f); do xx-verify --static $f; done
 
 FROM --platform=${BUILDPLATFORM} scratch AS spire-base
