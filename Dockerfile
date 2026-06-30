@@ -18,17 +18,49 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.7.0@sha256:010d4b66aed389848b0694
 
 FROM --platform=${BUILDPLATFORM} base as builder
 ARG TAG
+ARG datadog_instrumentation=false
+ARG orchestrion_version=v1.11.0
+ARG dd_trace_go_version=v2.9.1
 ARG TARGETPLATFORM
 ARG TARGETARCH
 COPY --link --from=xx / /
 
+RUN <<EOF
+set -e
+if [ "${datadog_instrumentation}" = "true" ]; then
+  go install "github.com/DataDog/orchestrion@${orchestrion_version}"
+  cat > orchestrion.tool.go <<'TOOL'
+//go:build tools
+
+package tools
+
+import (
+	_ "github.com/DataDog/orchestrion" // integration
+
+	_ "github.com/DataDog/dd-trace-go/contrib/aws/aws-sdk-go-v2/v2/aws"  // integration
+	_ "github.com/DataDog/dd-trace-go/contrib/database/sql/v2"           // integration
+	_ "github.com/DataDog/dd-trace-go/contrib/google.golang.org/grpc/v2" // integration
+	_ "github.com/DataDog/dd-trace-go/contrib/net/http/v2"               // integration
+)
+TOOL
+  go get \
+    "github.com/DataDog/orchestrion@${orchestrion_version}" \
+    "github.com/DataDog/dd-trace-go/contrib/aws/aws-sdk-go-v2/v2/aws@${dd_trace_go_version}" \
+    "github.com/DataDog/dd-trace-go/contrib/database/sql/v2@${dd_trace_go_version}" \
+    "github.com/DataDog/dd-trace-go/contrib/google.golang.org/grpc/v2@${dd_trace_go_version}" \
+    "github.com/DataDog/dd-trace-go/contrib/net/http/v2@${dd_trace_go_version}"
+  go mod tidy
+fi
+EOF
+
 RUN xx-go --wrap
 RUN set -e ; xx-apk --no-cache --update add build-base musl-dev libseccomp-dev
 ENV CGO_ENABLED=1
+ARG spire_binary
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     if [ "$TARGETARCH" = "arm64" ]; then CC=aarch64-alpine-linux-musl; elif [ "$TARGETARCH" = "s390x" ]; then CC=s390x-alpine-linux-musl; fi && \
-    make build-static git_tag=$TAG git_dirty="" && \
+    if [ -n "$spire_binary" ]; then make build-static git_tag=$TAG git_dirty="" binaries="$spire_binary"; else make build-static git_tag=$TAG git_dirty=""; fi && \
     for f in $(find bin -executable -type f); do xx-verify --static $f; done
 
 FROM --platform=${BUILDPLATFORM} scratch AS spire-base

@@ -9,6 +9,7 @@ permissions: {}
 
 env:
   NIGHTLY: true
+  DATADOG_INSTRUMENTATION: "true"
 
 jobs:
   build-and-publish-images:

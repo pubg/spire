@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  DATADOG_INSTRUMENTATION: "true"
+
 jobs:
   cache-deps:
     name: cache-deps (linux)
