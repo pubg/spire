@@ -41,6 +41,8 @@ import (
 	_ "github.com/DataDog/dd-trace-go/contrib/database/sql/v2"           // integration
 	_ "github.com/DataDog/dd-trace-go/contrib/google.golang.org/grpc/v2" // integration
 	_ "github.com/DataDog/dd-trace-go/contrib/net/http/v2"               // integration
+	_ "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"                 // integration
+	_ "github.com/DataDog/dd-trace-go/v2/orchestrion"                    // integration
 )
 TOOL
   go get \
@@ -48,7 +50,9 @@ TOOL
     "github.com/DataDog/dd-trace-go/contrib/aws/aws-sdk-go-v2/v2/aws@${dd_trace_go_version}" \
     "github.com/DataDog/dd-trace-go/contrib/database/sql/v2@${dd_trace_go_version}" \
     "github.com/DataDog/dd-trace-go/contrib/google.golang.org/grpc/v2@${dd_trace_go_version}" \
-    "github.com/DataDog/dd-trace-go/contrib/net/http/v2@${dd_trace_go_version}"
+    "github.com/DataDog/dd-trace-go/contrib/net/http/v2@${dd_trace_go_version}" \
+    "github.com/DataDog/dd-trace-go/v2/ddtrace/tracer@${dd_trace_go_version}" \
+    "github.com/DataDog/dd-trace-go/v2/orchestrion@${dd_trace_go_version}"
   go mod tidy
 fi
 EOF
