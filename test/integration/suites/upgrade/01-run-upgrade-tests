@@ -81,7 +81,7 @@ upgrade-server() {
 # being updated.
 check-codebase-version-is-ahead() {
     _current_version=$(docker compose exec -T -e DD_TRACE_STARTUP_LOGS=false spire-server-latest-local \
-            /opt/spire/bin/spire-server --version | cut -d'-' -f 1)
+            /opt/spire/bin/spire-server --version 2>&1 | sed -nE 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
 
     if [ "$_current_version" = "$1" ]; then
         fail-now "running upgrade test against the same version ($1)"
