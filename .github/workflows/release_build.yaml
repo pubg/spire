@@ -6,6 +6,9 @@ on:
 
 permissions: {}
 
+env:
+  DATADOG_INSTRUMENTATION: "true"
+
 jobs:
   cache-deps:
     name: cache-deps (linux)

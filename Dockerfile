@@ -18,17 +18,28 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.7.0@sha256:010d4b66aed389848b0694
 
 FROM --platform=${BUILDPLATFORM} base as builder
 ARG TAG
+ARG datadog_instrumentation=false
+ARG orchestrion_version=v1.11.0
 ARG TARGETPLATFORM
 ARG TARGETARCH
 COPY --link --from=xx / /
 
+RUN <<EOF
+set -e
+if [ "${datadog_instrumentation}" = "true" ]; then
+  go install "github.com/DataDog/orchestrion@${orchestrion_version}"
+  orchestrion pin
+fi
+EOF
+
 RUN xx-go --wrap
 RUN set -e ; xx-apk --no-cache --update add build-base musl-dev libseccomp-dev
 ENV CGO_ENABLED=1
+ARG spire_binary
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     if [ "$TARGETARCH" = "arm64" ]; then CC=aarch64-alpine-linux-musl; elif [ "$TARGETARCH" = "s390x" ]; then CC=s390x-alpine-linux-musl; fi && \
-    make build-static git_tag=$TAG git_dirty="" && \
+    if [ -n "$spire_binary" ]; then make build-static DATADOG_INSTRUMENTATION="$datadog_instrumentation" git_tag=$TAG git_dirty="" binaries="$spire_binary"; else make build-static DATADOG_INSTRUMENTATION="$datadog_instrumentation" git_tag=$TAG git_dirty=""; fi && \
     for f in $(find bin -executable -type f); do xx-verify --static $f; done
 
 FROM --platform=${BUILDPLATFORM} scratch AS spire-base

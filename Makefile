@@ -122,8 +122,11 @@ endif
 ############################################################################
 
 PLATFORMS ?= linux/amd64,linux/arm64
+DATADOG_INSTRUMENTATION ?= false
+ORCHESTRION_VERSION ?= v1.11.0
 
 binaries := spire-server spire-agent oidc-discovery-provider
+datadog_image_targets := spire-server spire-agent
 
 build_dir := $(DIR)/.build/$(os1)-$(arch1)
 
@@ -276,6 +279,9 @@ bin/%: support/% FORCE | go-check
 build-static: tidy $(addprefix bin/static/,$(binaries))
 
 go_build_static := $(go_path) go build $(go_flags) -ldflags '$(go_ldflags) -linkmode external -extldflags "-static"' -o
+ifeq ($(DATADOG_INSTRUMENTATION),true)
+go_build_static := $(go_path) GOFLAGS='$(GOFLAGS) "-toolexec=orchestrion toolexec"' go build $(go_flags) -ldflags '$(go_ldflags) -linkmode external -extldflags "-static"' -o
+endif
 
 bin/static/%: cmd/% FORCE | go-check
 	@echo Building $@…
@@ -335,6 +341,9 @@ $1: $3 container-builder
 		--platform $(PLATFORMS) \
 		--build-arg goversion=$(go_version) \
 		--build-arg TAG=$(TAG) \
+		--build-arg datadog_instrumentation=$(if $(filter $2,$(datadog_image_targets)),$(DATADOG_INSTRUMENTATION),false) \
+		--build-arg orchestrion_version=$(ORCHESTRION_VERSION) \
+		--build-arg spire_binary=$2 \
 		--target $2 \
 		-o type=oci,dest=$2-image.tar \
 		-f $3 \
