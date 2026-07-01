@@ -61,8 +61,9 @@ func normalizeData(data logrus.Fields) logrus.Fields {
 	if len(data) == 0 {
 		return nil
 	}
+	normalized := make(logrus.Fields, len(data))
 	for key, field := range data {
-		data[key] = fmt.Sprint(field)
+		normalized[key] = fmt.Sprint(field)
 	}
-	return data
+	return normalized
 }
