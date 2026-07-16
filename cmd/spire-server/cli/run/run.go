@@ -19,12 +19,12 @@ import (
 	"syscall"
 	"time"
 
+	"dario.cat/mergo"
 	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl"
 	"github.com/hashicorp/hcl/hcl/ast"
 	"github.com/hashicorp/hcl/hcl/printer"
 	"github.com/hashicorp/hcl/hcl/token"
-	"github.com/imdario/mergo"
 	"github.com/mitchellh/cli"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -87,6 +87,7 @@ type serverConfig struct {
 	LogFormat                    string             `hcl:"log_format"`
 	LogSourceLocation            bool               `hcl:"log_source_location"`
 	PruneAttestedNodesExpiredFor string             `hcl:"prune_attested_nodes_expired_for"`
+	PruneAttestedNodesBatchSize  int                `hcl:"prune_attested_nodes_batch_size"`
 	PruneNonReattestableNodes    bool               `hcl:"prune_tofu_nodes"`
 	ProxyProtocolTrustedCIDRs    []string           `hcl:"proxy_protocol_trusted_cidrs"`
 	RateLimit                    rateLimitConfig    `hcl:"ratelimit"`
@@ -710,6 +711,8 @@ func NewServerConfig(c *Config, logOptions []log.Option, allowUnknownConfig bool
 		if c.Server.PruneNonReattestableNodes {
 			sc.PruneNonReattestableNodes = c.Server.PruneNonReattestableNodes
 		}
+
+		sc.PruneAttestedNodesBatchSize = c.Server.PruneAttestedNodesBatchSize
 	}
 
 	if c.Server.DisableJWTSVIDs {
