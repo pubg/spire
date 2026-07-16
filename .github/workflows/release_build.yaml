@@ -3,6 +3,10 @@ on:
   push:
     tags:
       - 'v[0-9].[0-9]+.[0-9]+'
+      # Fork build tags: upstream version + commit sha suffix
+      # (e.g. v1.15.2-9bc0505b). Keeps fork releases from colliding with
+      # upstream version tags while reusing the same release pipeline.
+      - 'v[0-9].[0-9]+.[0-9]+-[0-9a-f]+'
 
 permissions: {}
 

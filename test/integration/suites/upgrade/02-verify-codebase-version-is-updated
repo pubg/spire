@@ -2,6 +2,14 @@
 
 git="git --git-dir ${REPODIR}/.git"
 
+# Fork build tags append a commit sha suffix to the upstream version
+# (e.g. v1.15.2-9bc0505b) so fork releases don't collide with upstream
+# version tags. Strip the suffix before comparing against the codebase
+# version, which never carries it.
+strip-build-sha() {
+    sed -E 's/-[0-9a-f]{7,40}$//'
+}
+
 check-version-against-latest-release() {
     _commit_version="$1"
     _default_branch="origin/$($git remote show origin | grep 'HEAD branch' | cut -d":" -f2 | xargs)"
@@ -27,12 +35,12 @@ check-version-against-latest-release() {
 
     if [ "${_version_from_branch}" = "${_default_branch}" ]; then
         # The default branch should use the latest release tag from the repo
-        _latest_version=$($git tag --list 'v*' --sort -version:refname | head -n1 | cut -c 2-)
+        _latest_version=$($git tag --list 'v*' --sort -version:refname | head -n1 | cut -c 2- | strip-build-sha)
         log-info "latest release: ${_latest_version}"
     else
         # Non-default branches should have aligned version with the latest
         # release from that branch. So we'll scan for the latest tag.
-        _latest_version=$($git describe --match "v*" --abbrev=0 "${_version_from_branch}"| cut -c 2-)
+        _latest_version=$($git describe --match "v*" --abbrev=0 "${_version_from_branch}"| cut -c 2- | strip-build-sha)
         log-info "latest release from ${_version_from_branch}: ${_latest_version}"
     fi
 
@@ -52,7 +60,7 @@ _commit_version=$(docker compose exec -T -e DD_TRACE_STARTUP_LOGS=false spire-se
 docker-down
 
 # Get tag of the current commit
-_current_tag=$($git describe --exact-match HEAD --match "v*"  2> /dev/null | cut -c 2- || true)
+_current_tag=$($git describe --exact-match HEAD --match "v*"  2> /dev/null | cut -c 2- | strip-build-sha || true)
 
 case "${_current_tag}" in
 
