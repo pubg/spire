@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/andres-erbsen/clock"
-	observer "github.com/imkira/go-observer"
 	"github.com/spiffe/go-spiffe/v2/bundle/spiffebundle"
+	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/spire/pkg/agent/client"
 	"github.com/spiffe/spire/pkg/agent/manager/cache"
@@ -20,6 +20,7 @@ import (
 	"github.com/spiffe/spire/pkg/common/backoff"
 	"github.com/spiffe/spire/pkg/common/errorutil"
 	"github.com/spiffe/spire/pkg/common/nodeutil"
+	"github.com/spiffe/spire/pkg/common/observer"
 	"github.com/spiffe/spire/pkg/common/rotationutil"
 	"github.com/spiffe/spire/pkg/common/telemetry"
 	"github.com/spiffe/spire/pkg/common/util"
@@ -94,6 +95,12 @@ type Manager interface {
 
 	// GetBundle get latest cached bundle
 	GetBundle() *cache.Bundle
+
+	// GetBundles gets the latest cached bundles for all trust domains.
+	GetBundles() map[spiffeid.TrustDomain]*cache.Bundle
+
+	// GetX509Bundle returns an X509 bundle source
+	GetX509Bundle() x509bundle.Source
 }
 
 // Cache stores each registration entry, signed X509-SVIDs for those entries,
@@ -103,6 +110,9 @@ type Cache interface {
 
 	// Bundle gets latest cached bundle
 	Bundle() *spiffebundle.Bundle
+
+	// Bundles gets the latest cached bundles for all trust domains.
+	Bundles() map[spiffeid.TrustDomain]*spiffebundle.Bundle
 
 	// SyncSVIDsWithSubscribers syncs SVID cache
 	SyncSVIDsWithSubscribers()
@@ -136,6 +146,8 @@ type Cache interface {
 
 	// Identities get all identities in cache
 	Identities() []cache.Identity
+
+	X509Bundle() x509bundle.Source
 }
 
 type manager struct {
@@ -365,9 +377,9 @@ func (m *manager) runSynchronizer(ctx context.Context) error {
 			}
 			seconds := time.Since(startTime)
 			if seconds < m.c.RebootstrapDelay {
-				fmt.Printf("Trust Bandle and Server dont agree.... Ignoring for now. Rebootstrap timeout left: %s\n", m.c.RebootstrapDelay-seconds)
+				m.c.Log.WithField("time_left", m.c.RebootstrapDelay-seconds).Info("Trust Bundle and Server don't agree, ignoring for now")
 			} else {
-				fmt.Printf("Trust Bandle and Server dont agree.... rebootstrapping")
+				m.c.Log.Warn("Trust Bundle and Server don't agree, rebootstrapping")
 				err = m.c.TrustBundleSources.SetForceRebootstrap()
 				if err != nil {
 					return err
@@ -438,6 +450,20 @@ func (m *manager) GetBundle() *cache.Bundle {
 	defer m.mtx.RUnlock()
 
 	return m.cache.Bundle()
+}
+
+func (m *manager) GetBundles() map[spiffeid.TrustDomain]*cache.Bundle {
+	m.mtx.RLock()
+	defer m.mtx.RUnlock()
+
+	return m.cache.Bundles()
+}
+
+func (m *manager) GetX509Bundle() x509bundle.Source {
+	m.mtx.RLock()
+	defer m.mtx.RUnlock()
+
+	return m.cache.X509Bundle()
 }
 
 func (m *manager) runSVIDObserver(ctx context.Context) error {
