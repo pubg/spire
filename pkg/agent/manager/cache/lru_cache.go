@@ -11,7 +11,6 @@ import (
 	"github.com/andres-erbsen/clock"
 	"github.com/sirupsen/logrus"
 	"github.com/spiffe/go-spiffe/v2/bundle/spiffebundle"
-	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/spire/pkg/common/backoff"
 	"github.com/spiffe/spire/pkg/common/telemetry"
@@ -114,9 +113,6 @@ type StaleEntry struct {
 // presumed to own ALL data passing in and out of the cache. Producers and
 // consumers MUST NOT mutate the data.
 type LRUCache struct {
-	*BundleCache
-	*JWTSVIDCache
-
 	log         logrus.FieldLogger
 	trustDomain spiffeid.TrustDomain
 	clk         clock.Clock
@@ -150,15 +146,12 @@ type LRUCache struct {
 	taintedBatchProcessedCh chan struct{}
 }
 
-func NewLRUCache(log logrus.FieldLogger, trustDomain spiffeid.TrustDomain, bundle *Bundle, metrics telemetry.Metrics, x509SvidCacheMaxSize int, jwtSvidCacheMaxSize int, clk clock.Clock) *LRUCache {
+func NewLRUCache(log logrus.FieldLogger, trustDomain spiffeid.TrustDomain, bundle *Bundle, metrics telemetry.Metrics, x509SvidCacheMaxSize int, clk clock.Clock) *LRUCache {
 	if x509SvidCacheMaxSize <= 0 {
 		x509SvidCacheMaxSize = DefaultSVIDCacheMaxSize
 	}
 
 	return &LRUCache{
-		BundleCache:  NewBundleCache(trustDomain, bundle),
-		JWTSVIDCache: NewJWTSVIDCache(log, metrics, jwtSvidCacheMaxSize),
-
 		log:          log,
 		metrics:      metrics,
 		trustDomain:  trustDomain,
@@ -217,10 +210,6 @@ func (c *LRUCache) CountX509SVIDs() int {
 	return len(c.svids)
 }
 
-func (c *LRUCache) CountJWTSVIDs() int {
-	return c.JWTSVIDCache.CountJWTSVIDs()
-}
-
 func (c *LRUCache) CountRecords() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -275,11 +264,8 @@ func (c *LRUCache) UpdateEntries(update *UpdateEntries, checkSVID func(*common.R
 	// domain should NOT be removed even if not present (which should only be
 	// the case if there is a bug on the server) since it is necessary to
 	// authenticate the server.
-	bundleRemoved := false
 	for id := range c.bundles {
 		if _, ok := update.Bundles[id]; !ok && id != c.trustDomain {
-			bundleRemoved = true
-			// bundle no longer exists.
 			c.log.WithField(telemetry.TrustDomainID, id).Debug("Bundle removed")
 			delete(c.bundles, id)
 		}
@@ -476,10 +462,6 @@ func (c *LRUCache) UpdateEntries(update *UpdateEntries, checkSVID func(*common.R
 		c.log.WithField(telemetry.OutdatedSVIDs, len(outdatedEntries)).
 			Debug("Updating SVIDs with outdated attributes in cache")
 	}
-	if bundleRemoved || len(bundleChanged) > 0 {
-		c.BundleCache.Update(c.bundles)
-	}
-
 	if trustDomainBundleChanged {
 		c.notifyAll()
 	} else {
@@ -584,13 +566,6 @@ func (c *LRUCache) SyncSVIDsWithSubscribers() {
 	defer c.mu.Unlock()
 
 	c.syncSVIDsWithSubscribers()
-}
-
-func (c *LRUCache) X509Bundle() x509bundle.Source {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return c.BundleCache
 }
 
 // scheduleRotation processes SVID entries in batches, removing those tainted by X.509 authorities.

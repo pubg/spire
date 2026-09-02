@@ -108,20 +108,11 @@ type Manager interface {
 type Cache interface {
 	SVIDCache
 
-	// Bundle gets latest cached bundle
-	Bundle() *spiffebundle.Bundle
-
-	// Bundles gets the latest cached bundles for all trust domains.
-	Bundles() map[spiffeid.TrustDomain]*spiffebundle.Bundle
-
 	// SyncSVIDsWithSubscribers syncs SVID cache
 	SyncSVIDsWithSubscribers()
 
 	// SubscribeToWorkloadUpdates creates a subscriber for given selector set.
 	SubscribeToWorkloadUpdates(ctx context.Context, selectors cache.Selectors) (cache.Subscriber, error)
-
-	// SubscribeToBundleChanges creates a stream for providing bundle changes
-	SubscribeToBundleChanges() *cache.BundleStream
 
 	// MatchingRegistrationEntries with given selectors
 	MatchingRegistrationEntries(selectors []*common.Selector) []*common.RegistrationEntry
@@ -129,11 +120,19 @@ type Cache interface {
 	// CountX509SVIDs in cache stored
 	CountX509SVIDs() int
 
-	// CountJWTSVIDs in cache stored
-	CountJWTSVIDs() int
-
 	// FetchWorkloadUpdate for given selectors
 	FetchWorkloadUpdate(selectors []*common.Selector) *cache.WorkloadUpdate
+
+	// Entries get all registration entries
+	Entries() []*common.RegistrationEntry
+
+	// Identities get all identities in cache
+	Identities() []cache.Identity
+}
+
+type JWTCache interface {
+	// CountJWTSVIDs in cache stored
+	CountJWTSVIDs() int
 
 	// GetJWTSVID provides JWT-SVID
 	GetJWTSVID(id spiffeid.ID, audience []string) (*client.JWTSVID, bool)
@@ -141,13 +140,10 @@ type Cache interface {
 	// SetJWTSVID adds JWT-SVID to cache
 	SetJWTSVID(id spiffeid.ID, audience []string, svid *client.JWTSVID)
 
-	// Entries get all registration entries
-	Entries() []*common.RegistrationEntry
-
-	// Identities get all identities in cache
-	Identities() []cache.Identity
-
-	X509Bundle() x509bundle.Source
+	// TaintJWTSVIDs removes JWT-SVIDs with tainted authorities from the cache,
+	// forcing the server to issue a new JWT-SVID when one with a tainted
+	// authority is requested.
+	TaintJWTSVIDs(ctx context.Context, taintedJWTAuthorities map[string]struct{})
 }
 
 type manager struct {
@@ -158,8 +154,10 @@ type manager struct {
 	// Protects multiple goroutines from requesting SVID signings at the same time
 	updateSVIDMu sync.RWMutex
 
-	cache Cache
-	svid  svid.Rotator
+	bundleCache *cache.BundleCache
+	cache       Cache
+	jwtCache    JWTCache
+	svid        svid.Rotator
 
 	storage storage.Storage
 
@@ -198,7 +196,7 @@ type manager struct {
 
 func (m *manager) Initialize(ctx context.Context) error {
 	m.storeSVID(m.svid.State().SVID, m.svid.State().Reattestable)
-	m.storeBundle(m.cache.Bundle())
+	m.storeBundle(m.bundleCache.Bundle())
 
 	// upper limit of backoff is 8 mins
 	synchronizeBackoffMaxInterval := min(synchronizeMaxInterval, synchronizeMaxIntervalMultiple*m.c.SyncInterval)
@@ -270,7 +268,7 @@ func (m *manager) SubscribeToSVIDChanges() observer.Stream {
 }
 
 func (m *manager) SubscribeToBundleChanges() *cache.BundleStream {
-	return m.cache.SubscribeToBundleChanges()
+	return m.bundleCache.SubscribeToBundleChanges()
 }
 
 func (m *manager) GetRotationMtx() *sync.RWMutex {
@@ -294,7 +292,7 @@ func (m *manager) CountX509SVIDs() int {
 }
 
 func (m *manager) CountJWTSVIDs() int {
-	return m.cache.CountJWTSVIDs()
+	return m.jwtCache.CountJWTSVIDs()
 }
 
 func (m *manager) CountSVIDStoreX509SVIDs() int {
@@ -320,7 +318,7 @@ func (m *manager) FetchJWTSVID(ctx context.Context, entry *common.RegistrationEn
 	var cachedSVID *client.JWTSVID
 	var ok bool
 	if !bypassCache {
-		cachedSVID, ok = m.cache.GetJWTSVID(spiffeID, audience)
+		cachedSVID, ok = m.jwtCache.GetJWTSVID(spiffeID, audience)
 		if ok && !m.c.RotationStrategy.JWTSVIDExpiresSoon(cachedSVID, now) {
 			return cachedSVID, nil
 		}
@@ -344,7 +342,7 @@ func (m *manager) FetchJWTSVID(ctx context.Context, entry *common.RegistrationEn
 	}
 
 	if !bypassCache {
-		m.cache.SetJWTSVID(svidSPIFFEID, audience, newSVID)
+		m.jwtCache.SetJWTSVID(svidSPIFFEID, audience, newSVID)
 	}
 	return newSVID, nil
 }
@@ -446,24 +444,15 @@ func (m *manager) GetLastSync() time.Time {
 }
 
 func (m *manager) GetBundle() *cache.Bundle {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
-
-	return m.cache.Bundle()
+	return m.bundleCache.Bundle()
 }
 
 func (m *manager) GetBundles() map[spiffeid.TrustDomain]*cache.Bundle {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
-
-	return m.cache.Bundles()
+	return m.bundleCache.Bundles()
 }
 
 func (m *manager) GetX509Bundle() x509bundle.Source {
-	m.mtx.RLock()
-	defer m.mtx.RUnlock()
-
-	return m.cache.X509Bundle()
+	return m.bundleCache
 }
 
 func (m *manager) runSVIDObserver(ctx context.Context) error {

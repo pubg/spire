@@ -30,6 +30,7 @@ This document is a configuration reference for SPIRE Agent. It includes informat
 | WorkloadAttestor | [k8s](/doc/plugin_agent_workloadattestor_k8s.md)                        | A workload attestor which allows selectors based on Kubernetes constructs such `ns` (namespace) and `sa` (service account)                       |
 | WorkloadAttestor | [unix](/doc/plugin_agent_workloadattestor_unix.md)                      | A workload attestor which generates unix-based selectors like `uid` and `gid`                                                                    |
 | WorkloadAttestor | [systemd](/doc/plugin_agent_workloadattestor_systemd.md)                | A workload attestor which generates selectors based on systemd unit properties such as `Id` and `FragmentPath`                                   |
+| WorkloadAttestor | [slurm](/doc/plugin_agent_workloadattestor_slurm.md)                    | A workload attestor which allows selectors based on Slurm job information                                                                        |
 | SVIDStore        | [aws_secretsmanager](/doc/plugin_agent_svidstore_aws_secretsmanager.md) | An SVIDstore which stores secrets in the AWS secrets manager with the resulting X509-SVIDs of the entries that the agent is entitled to.         |
 | SVIDStore        | [gcp_secretmanager](/doc/plugin_agent_svidstore_gcp_secretmanager.md)   | An SVIDStore which stores secrets in the Google Cloud Secret Manager with the resulting X509-SVIDs of the entries that the agent is entitled to. |
 
@@ -49,6 +50,8 @@ This may be useful for templating configuration files, for example across differ
 | `allowed_foreign_jwt_claims`      | List of trusted claims to be returned when validating foreign JWTSVIDs                                                                                                                                                                            |                                  |
 | `authorized_delegates`            | A SPIFFE ID list of the authorized delegates. See [Delegated Identity API](#delegated-identity-api) for more information                                                                                                                          |                                  |
 | `data_dir`                        | A directory the agent can use for its runtime data                                                                                                                                                                                                | $PWD                             |
+| `disable_sds_api`                 | Disable the Envoy SDS API. The public socket or named pipe remains exposed if the Workload API is enabled.                                                                                                                                        | false                            |
+| `disable_workload_api`            | Disable the SPIFFE Workload API. The public socket or named pipe remains exposed if SDS is enabled.                                                                                                                                               | false                            |
 | `experimental`                    | The experimental options that are subject to change or removal (see below)                                                                                                                                                                        |                                  |
 | `insecure_bootstrap`              | If true, the agent bootstraps without verifying the server's identity                                                                                                                                                                             | false                            |
 | `rebootstrap_mode`                | Can be one of 'never', 'auto', or 'always'                                                                                                                                                                                                        | never                            |
@@ -66,11 +69,12 @@ This may be useful for templating configuration files, for example across differ
 | `profiling_port`                  | Port number of the [net/http/pprof](https://pkg.go.dev/net/http/pprof) endpoint. Only used when `profiling_enabled` is `true`.                                                                                                                    |                                  |
 | `server_address`                  | DNS name or IP address of the SPIRE server                                                                                                                                                                                                        |                                  |
 | `server_port`                     | Port number of the SPIRE server                                                                                                                                                                                                                   |                                  |
-| `socket_path`                     | Location to bind the SPIRE Agent API socket (Unix only)                                                                                                                                                                                           | /tmp/spire-agent/public/api.sock |
+| `socket_path`                     | Location to bind the SPIRE Agent Workload API and SDS socket (Unix only). The socket is exposed unless both `disable_workload_api` and `disable_sds_api` are `true`.                                                                              | /tmp/spire-agent/public/api.sock |
 | `sds`                             | Optional SDS configuration section                                                                                                                                                                                                                |                                  |
 | `trust_bundle_path`               | Path to the SPIRE server CA bundle                                                                                                                                                                                                                |                                  |
 | `trust_bundle_url`                | URL to download the initial SPIRE server trust bundle                                                                                                                                                                                             |                                  |
 | `trust_bundle_unix_socket`        | Make the request specified via trust_bundle_url happen against the specified unix socket.                                                                                                                                                         |                                  |
+| `trust_bundle_spiffe_workload_api`| SPIFFE Workload API endpoint (e.g. `unix:///run/spire/agent.sock`) to fetch the SPIRE server trust bundle from. Useful for nested agents. `trust_bundle_format` does not apply to this source.                                                    |                                  |
 | `trust_bundle_format`             | Format of the initial trust bundle, pem or spiffe                                                                                                                                                                                                 | pem                              |
 | `trust_domain`                    | The trust domain that this agent belongs to (should be no more than 255 characters)                                                                                                                                                               |                                  |
 | `workload_x509_svid_key_type`     | The workload X509 SVID key type &lt;rsa-2048&vert;ec-p256&vert;ec-p384&gt;                                                                                                                                                                        | ec-p256                          |
@@ -80,7 +84,7 @@ This may be useful for templating configuration files, for example across differ
 
 | experimental                  | Description                                                                                                                                                                         | Default                 |
 | :---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| `named_pipe_name`             | Pipe name to bind the SPIRE Agent API named pipe (Windows only)                                                                                                                     | \spire-agent\public\api |
+| `named_pipe_name`             | Pipe name to bind the SPIRE Agent Workload API and SDS named pipe (Windows only). The named pipe is exposed unless both `disable_workload_api` and `disable_sds_api` are `true`.    | \spire-agent\public\api |
 | `sync_interval`               | Sync interval with SPIRE server with exponential backoff                                                                                                                            | 5 sec                   |
 | `use_sync_authorized_entries` | Use SyncAuthorizedEntries API for periodically synchronization of authorized entries                                                                                                | true                    |
 | `require_pq_kem`              | Require use of a post-quantum-safe key exchange method for TLS handshakes                                                                                                           | false                   |
@@ -141,15 +145,16 @@ The second case is when trust is lost and must be reestablished, known as Reboos
 
 ### Configuring the source for Server Attestation
 
-There are three main options and a sub option:
+There are four main options and a sub option:
 
 1. If the `trust_bundle_path` option is used, the agent will read a bootstrap trust bundle from the file at that path. You need to safely copy or share the file before starting the SPIRE Agent.
 2. If the `trust_bundle_url` option is used, the agent will read the bootstrap trust bundle from the specified URL.
     1. If trust_bundle_unix_socket is unset, **The URL must start with `https://` for security, and the server must have a valid certificate (verified with the system trust store).** This can be used to rapidly deploy SPIRE agents without having to manually share a file. Keep in mind the contents of the URL need to be kept up to date.
     2. If trust_bundle_unix_socket is set, **The URL must start with `http://`.** This can be used along with a local service running on the socket to fetch up to date trust bundles via some site specific, secure mechanism.
-3. If the `insecure_bootstrap` option is set to `true`, then the agent will not use a bootstrap trust bundle. It will connect to the SPIRE Server without authenticating it. This is not a secure configuration, because a man-in-the-middle attacker could control the SPIRE infrastructure. It is included because it is a useful option for testing and development.
+3. If the `trust_bundle_spiffe_workload_api` option is used, the agent will fetch a fresh copy of the trust bundle for its trust domain from the SPIFFE Workload API at the specified endpoint (e.g. `unix:///run/spire/agent.sock`, or `npipe:pipeName` on Windows) every time bootstrapping or rebootstrapping is needed. This is useful when nesting SPIRE Agents, such as with the `x509pop` NodeAttestor pointed at an upstream agent's Workload API, without needing a separate adapter daemon.
+4. If the `insecure_bootstrap` option is set to `true`, then the agent will not use a bootstrap trust bundle. It will connect to the SPIRE Server without authenticating it. This is not a secure configuration, because a man-in-the-middle attacker could control the SPIRE infrastructure. It is included because it is a useful option for testing and development.
 
-Only one of these three main options may be set at a time.
+Only one of these four main options may be set at a time.
 
 ### Rebootstrapping
 
@@ -158,7 +163,7 @@ There are two options that relate to rebootstrapping
 `rebootstrap_mode` can be set to one of `never`, `auto`, or `always`.
 
 1. When set to `never`, the agent will be prevented from automated rebootstrapping, and manual recovery will be necessary if trust is ever lost.
-2. When set to `always`, the agent will attempt to rebootstrap, attesting the server again using the `trust_bundle_path`, `trust_bundle_url`, and/or `trust_bundle_unix_socket` settings when needed. The ability to rebootstrap needs to be supported by the agent NodeAttestor plugin along with the configuration of the server. The `always` mode will fail the agent if the plugin, server, and configurations are incompatible.
+2. When set to `always`, the agent will attempt to rebootstrap, attesting the server again using the `trust_bundle_path`, `trust_bundle_url`, `trust_bundle_unix_socket`, and/or `trust_bundle_spiffe_workload_api` settings when needed. The ability to rebootstrap needs to be supported by the agent NodeAttestor plugin along with the configuration of the server. The `always` mode will fail the agent if the plugin, server, and configurations are incompatible.
 3. `auto` mode functions like `always` except when unsupported, it will automatically disable rebootstrapping of the agent.
 
 The other option is `rebootstrap_delay`. It defaults to `10m`. This is the duration to wait between when a server is first seen that isn't trusted by the agents trust bundle and when to start the rebootstrapping process. No rebootstrapping is allowed during this delay period. If a secure server connection is established successfully during this delay period, the delay clock will be reset.
@@ -301,6 +306,8 @@ the following flags are available:
 | `-allowUnauthenticatedVerifiers` | Allow agent to release trust bundles to unauthenticated verifiers                             |                       |
 | `-config`                        | Path to a SPIRE config file                                                                   | conf/agent/agent.conf |
 | `-dataDir`                       | A directory the agent can use for its runtime data                                            |                       |
+| `-disableSDSAPI`                 | Disable the Envoy SDS API                                                                     | false                 |
+| `-disableWorkloadAPI`            | Disable the SPIFFE Workload API                                                               | false                 |
 | `-expandEnv`                     | Expand environment $VARIABLES in the config file                                              |                       |
 | `-joinToken`                     | An optional token which has been generated by the SPIRE server                                |                       |
 | `-joinTokenFile`                 | Path to a file containing an optional join token which has been generated by the SPIRE server |                       |
@@ -309,7 +316,7 @@ the following flags are available:
 | `-logLevel`                      | DEBUG, INFO, WARN or ERROR                                                                    |                       |
 | `-serverAddress`                 | IP address or DNS name of the SPIRE server                                                    |                       |
 | `-serverPort`                    | Port number of the SPIRE server                                                               |                       |
-| `-socketPath`                    | Location to bind the workload API socket                                                      |                       |
+| `-socketPath`                    | Location to bind the Workload API and SDS socket                                              |                       |
 | `-trustBundle`                   | Path to the SPIRE server CA bundle                                                            |                       |
 | `-trustBundleUrl`                | URL to download the SPIRE server CA bundle                                                    |                       |
 | `-trustDomain`                   | The trust domain that this agent belongs to (should be no more than 255 characters)           |                       |
@@ -385,9 +392,23 @@ Attaches to the workload API and watches for X509-SVID updates, printing details
 |---------------|------------------------------------|----------------------------------|
 | `-socketPath` | Path to the SPIRE Agent API socket | /tmp/spire-agent/public/api.sock |
 
+### `spire-agent debug getinfo`
+
+Prints debug information about the agent, including uptime, last successful
+sync time, cached SVID counts, and the agent's own SVID chain. This command
+requires the Agent Admin API to be enabled (e.g., via `admin_socket_path` on
+Unix or `admin_named_pipe_name` on Windows).
+
+| Command       | Action                                    | Default                             |
+|:--------------|:------------------------------------------|:------------------------------------|
+| `-output`     | Desired output format (`pretty`, `json`)  | `pretty`                            |
+| `-socketPath` | Path to the SPIRE Agent admin API socket  | /tmp/spire-agent/private/admin.sock |
+
 ### `spire-agent healthcheck`
 
 Checks SPIRE agent's health.
+
+This command connects to the public Workload API/SDS endpoint. If both `disable_workload_api` and `disable_sds_api` are `true`, use the `health_checks` HTTP listener for liveness and readiness probes instead.
 
 | Command       | Action                                | Default                          |
 |:--------------|:--------------------------------------|:---------------------------------|
@@ -682,7 +703,7 @@ gRPC layer.
 ## Envoy SDS Support
 
 SPIRE agent has support for the [Envoy](https://envoyproxy.io) [Secret Discovery Service](https://www.envoyproxy.io/docs/envoy/latest/configuration/security/secret) (SDS).
-SDS is served over the same Unix domain socket as the Workload API. Envoy processes connecting to SDS are attested as workloads.
+SDS is served over the same public SPIRE Agent socket or named pipe as the Workload API. Envoy processes connecting to SDS are attested as workloads. SDS can be disabled with `disable_sds_api`.
 
 [`tlsv3.TlsCertificate`](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/transport_sockets/tls/v3/common.proto#extensions-transport-sockets-tls-v3-tlscertificate)
 resources containing X509-SVIDs can be fetched using the SPIFFE ID of the workload as the resource name

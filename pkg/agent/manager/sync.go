@@ -41,11 +41,6 @@ type SVIDCache interface {
 	// TaintX509SVIDs marks all SVIDs signed by a tainted X.509 authority as tainted
 	// to force their rotation.
 	TaintX509SVIDs(ctx context.Context, taintedX509Authorities []*x509.Certificate)
-
-	// TaintJWTSVIDs removes JWT-SVIDs with tainted authorities from the cache,
-	// forcing the server to issue a new JWT-SVID when one with a tainted
-	// authority is requested.
-	TaintJWTSVIDs(ctx context.Context, taintedJWTAuthorities map[string]struct{})
 }
 
 func (m *manager) syncSVIDs(ctx context.Context) (err error) {
@@ -87,7 +82,7 @@ func (m *manager) processTaintedAuthorities(ctx context.Context, bundle *spiffeb
 			Debug("New tainted JWT authorities found")
 
 		// Taint JWT-SVIDs in the cache
-		m.cache.TaintJWTSVIDs(ctx, jwtAuthorities)
+		m.jwtCache.TaintJWTSVIDs(ctx, jwtAuthorities)
 
 		for _, subjectKeyID := range newTaintedJWTAuthorities {
 			m.processedTaintedJWTAuthorities[subjectKeyID] = struct{}{}
@@ -104,6 +99,13 @@ func (m *manager) synchronize(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+
+	// Update the shared bundle cache as soon as the latest bundles are
+	// available. This keeps bundle consumers (rotator, broker, bundle
+	// observer) in sync even if a later step (e.g. SVID fetching) fails, and
+	// avoids a stale bundle view relative to the workload cache, which is
+	// updated by updateCache below.
+	m.bundleCache.Update(cacheUpdate.Bundles)
 
 	// Process all tainted authorities. The bundle is shared between both caches using regular cache data.
 	if err := m.processTaintedAuthorities(ctx, cacheUpdate.Bundles[m.c.TrustDomain], cacheUpdate.TaintedX509Authorities, cacheUpdate.TaintedJWTAuthorities); err != nil {
