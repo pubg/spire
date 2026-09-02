@@ -82,7 +82,30 @@ func (a *Agent) Run(ctx context.Context) error {
 		defer stopProfiling()
 	}
 
-	var mgr manager.Manager
+	// mgr is assigned by newManager well after the telemetry sinks are started, so
+	// the callbacks below can run on exporter goroutines before that write lands.
+	// An interface value is two words, making an unsynchronized read a data race
+	// rather than just a torn nil check, so all reads from other goroutines go
+	// through getManager.
+	var (
+		mgrMu sync.Mutex
+		mgr   manager.Manager
+	)
+	getManager := func() manager.Manager {
+		mgrMu.Lock()
+		defer mgrMu.Unlock()
+		return mgr
+	}
+	// Kept separate from newManager so the lock is only held for the assignment.
+	// newManager retries Initialize for up to bootstrapBackoffMaxElapsedTime, or
+	// rebootstrapBackoffMaxElapsedTime when rebootstrapping, and holding mgrMu
+	// across that would stall every scrape for the same period.
+	setManager := func(m manager.Manager) {
+		mgrMu.Lock()
+		defer mgrMu.Unlock()
+		mgr = m
+	}
+
 	metrics, err := telemetry.NewMetrics(&telemetry.MetricsConfig{
 		FileConfig:  a.c.Telemetry,
 		Logger:      a.c.Log.WithField(telemetry.SubsystemName, telemetry.Telemetry),
@@ -90,6 +113,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		TrustDomain: a.c.TrustDomain.Name(),
 		TLSPolicy:   a.c.TLSPolicy,
 		GetX509SVID: func() (*x509svid.SVID, error) {
+			mgr := getManager()
 			if mgr == nil {
 				return nil, errors.New("agent manager is not initialized")
 			}
@@ -111,6 +135,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			}, nil
 		},
 		GetX509BundleAuthorities: func(td spiffeid.TrustDomain) ([]*x509.Certificate, error) {
+			mgr := getManager()
 			if mgr == nil {
 				return nil, errors.New("agent manager is not initialized")
 			}
@@ -146,6 +171,16 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 
 	taskRunner := util.NewTaskRunner(ctx, cancel)
+
+	// Start the telemetry sinks before node attestation. Attestation can retry for
+	// bootstrapBackoffMaxElapsedTime, or rebootstrapBackoffMaxElapsedTime when
+	// rebootstrapping, and every return before StartTasks(tasks...) below would
+	// otherwise leave the exporter unbound - so an agent that never attests
+	// successfully exposes no metrics at all, including spire_agent_started,
+	// spire_agent_uptime and the bootstrap gauges. This also gates the InMem sink's
+	// signal handler, since MetricsImpl.ListenAndServe drives every sink runner.
+	taskRunner.StartTasks(metrics.ListenAndServe)
+
 	nodeAttestor := nodeattestor.JoinToken(a.c.Log, a.c.JoinToken)
 	if a.c.JoinToken == "" {
 		nodeAttestor = cat.GetNodeAttestor()
@@ -262,10 +297,14 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	svidStoreCache := a.newSVIDStoreCache(metrics)
 
-	mgr, err = a.newManager(ctx, sto, cat, metrics, as, svidStoreCache, nodeAttestor)
+	newMgr, err := a.newManager(ctx, sto, cat, metrics, as, svidStoreCache, nodeAttestor)
 	if err != nil {
 		return err
 	}
+	// Publish it; the telemetry callbacks may already be reading via getManager.
+	// Reads below are on this goroutine and need no locking, as nothing else
+	// writes mgr.
+	setManager(newMgr)
 
 	storeService := a.newSVIDStoreService(svidStoreCache, cat, metrics)
 	workloadAttestor := workload_attestor.New(&workload_attestor.Config{
@@ -274,18 +313,21 @@ func (a *Agent) Run(ctx context.Context) error {
 		Metrics: metrics,
 	})
 
-	agentEndpoints := a.newEndpoints(metrics, mgr, workloadAttestor)
-	go func() {
-		agentEndpoints.WaitForListening(readyForHealthChecks)
-		a.started = true
-	}()
-
 	tasks := []func(context.Context) error{
-		metrics.ListenAndServe,
 		mgr.Run,
 		storeService.Run,
-		agentEndpoints.ListenAndServe,
 		catalog.ReconfigureTask(a.c.Log.WithField(telemetry.SubsystemName, "reconfigurer"), cat),
+	}
+	var apiReadyChannels []chan struct{}
+
+	if a.c.BindAddress != nil {
+		agentEndpoints := a.newEndpoints(metrics, mgr, workloadAttestor)
+		listening := make(chan struct{})
+		apiReadyChannels = append(apiReadyChannels, listening)
+		go agentEndpoints.WaitForListening(listening)
+		tasks = append(tasks, agentEndpoints.ListenAndServe)
+	} else {
+		a.c.Log.WithField("apis", "Workload and SDS APIs").Info("Skipping agent APIs because public endpoint is disabled")
 	}
 
 	if a.c.AdminBindAddress != nil {
@@ -308,8 +350,19 @@ func (a *Agent) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to create broker endpoints: %w", err)
 		}
+		listening := make(chan struct{})
+		apiReadyChannels = append(apiReadyChannels, listening)
+		go brokerEndpoints.WaitForListening(listening)
 		tasks = append(tasks, brokerEndpoints.ListenAndServe)
 	}
+
+	go func() {
+		for _, listening := range apiReadyChannels {
+			<-listening
+		}
+		a.started = true
+		close(readyForHealthChecks)
+	}()
 
 	if a.c.LogReopener != nil {
 		tasks = append(tasks, a.c.LogReopener)
@@ -392,6 +445,10 @@ func (a *Agent) attest(ctx context.Context, sto storage.Storage, cat catalog.Cat
 }
 
 func (a *Agent) newManager(ctx context.Context, sto storage.Storage, cat catalog.Catalog, metrics telemetry.Metrics, as *node_attestor.AttestationResult, cache *storecache.Cache, na nodeattestor.NodeAttestor) (manager.Manager, error) {
+	if !as.Reattestable && cat.GetKeyManager().Name() == "memory" {
+		a.c.Log.Warn("Node attestation is not reattestable and the 'memory' key manager is in use; if the agent process is restarted, it will be unable to obtain a new SVID and will need to be manually evicted to be able to re-attest.")
+	}
+
 	config := &manager.Config{
 		SVID:                     as.SVID,
 		SVIDKey:                  as.Key,
@@ -518,6 +575,8 @@ func (a *Agent) newEndpoints(metrics telemetry.Metrics, mgr manager.Manager, att
 		AllowedForeignJWTClaims:       a.c.AllowedForeignJWTClaims,
 		LogSelectors:                  a.c.LogSelectors,
 		TrustDomain:                   a.c.TrustDomain,
+		DisableWorkloadAPI:            a.c.DisableWorkloadAPI,
+		DisableSDSAPI:                 a.c.DisableSDSAPI,
 		WorkloadAPIRateLimit:          a.c.WorkloadAPIRateLimit,
 	})
 }
@@ -540,6 +599,14 @@ func (a *Agent) newAdminEndpoints(metrics telemetry.Metrics, mgr manager.Manager
 
 // CheckHealth is used as a top-level health check for the agent.
 func (a *Agent) CheckHealth() health.State {
+	if a.c.BindAddress == nil {
+		return health.State{
+			Started: &a.started,
+			Ready:   a.started,
+			Live:    true,
+		}
+	}
+
 	err := a.checkWorkloadAPI()
 
 	// Both liveness and readiness checks are done by

@@ -45,6 +45,7 @@ This document is a configuration reference for SPIRE Server. It includes informa
 | BundlePublisher    | [aws_s3](/doc/plugin_server_bundlepublisher_aws_s3.md)                                               | Publishes the trust bundle to an Amazon S3 bucket.                                                                          |
 | BundlePublisher    | [gcp_cloudstorage](/doc/plugin_server_bundlepublisher_gcp_cloudstorage.md)                           | Publishes the trust bundle to a Google Cloud Storage bucket.                                                                |
 | BundlePublisher    | [aws_rolesanywhere_trustanchor](/doc/plugin_server_bundlepublisher_aws_rolesanywhere_trustanchor.md) | Publishes the trust bundle to an AWS IAM Roles Anywhere trust anchor.                                                       |
+| BundlePublisher    | [azure_blob](/doc/plugin_server_bundlepublisher_azure_blob.md)                                       | Publishes the trust bundle to an Azure Blob Storage account.                                                                |
 | BundlePublisher    | [k8s_configmap](/doc/plugin_server_bundlepublisher_k8s_configmap.md)                                 | Publishes the trust bundle to a Kubernetes ConfigMap.                                                                       |
 
 ## Server configuration file
@@ -627,6 +628,16 @@ Displays the details (including node selectors) of an attested node given its sp
 |:--------------|:----------------------------------------------------|:-----------------------------------|
 | `-socketPath` | Path to the SPIRE Server API socket                 | /tmp/spire-server/private/api.sock |
 | `-spiffeID`   | The SPIFFE ID of the agent to show (agent identity) |                                    |
+
+### `spire-server debug getinfo`
+
+Prints debug information about the server, including uptime, registered
+agent/entry/federated bundle counts, and the server's own SVID chain.
+
+| Command       | Action                                   | Default                            |
+|:--------------|:-----------------------------------------|:-----------------------------------|
+| `-output`     | Desired output format (`pretty`, `json`) | `pretty`                           |
+| `-socketPath` | Path to the SPIRE Server API socket      | /tmp/spire-server/private/api.sock |
 
 ### `spire-server healthcheck`
 

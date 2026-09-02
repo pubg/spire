@@ -132,30 +132,6 @@ func TestLRUCacheCountRecords(t *testing.T) {
 	require.Equal(t, 2, cache.CountRecords())
 }
 
-func TestLRUCacheBundleChanges(t *testing.T) {
-	cache := newTestLRUCache(t)
-
-	bundleStream := cache.SubscribeToBundleChanges()
-	assert.Equal(t, makeBundles(bundleV1), bundleStream.Value())
-
-	cache.UpdateEntries(&UpdateEntries{
-		Bundles: makeBundles(bundleV1, otherBundleV1),
-	}, nil)
-	if assert.True(t, bundleStream.HasNext(), "has new bundle value after adding bundle") {
-		bundleStream.Next()
-		assert.Equal(t, makeBundles(bundleV1, otherBundleV1), bundleStream.Value())
-	}
-
-	cache.UpdateEntries(&UpdateEntries{
-		Bundles: makeBundles(bundleV1),
-	}, nil)
-
-	if assert.True(t, bundleStream.HasNext(), "has new bundle value after removing bundle") {
-		bundleStream.Next()
-		assert.Equal(t, makeBundles(bundleV1), bundleStream.Value())
-	}
-}
-
 func TestLRUCacheAllSubscribersNotifiedOnBundleChange(t *testing.T) {
 	cache := newTestLRUCache(t)
 
@@ -1255,16 +1231,16 @@ func TestNewLRUCache(t *testing.T) {
 	// Negative for value for svidCacheMaxSize should set default value in
 	// cache.svidCacheMaxSize
 	cache := newTestLRUCacheWithConfig(-5, clock.NewMock(t))
-	require.Equal(t, DefaultSVIDCacheMaxSize, cache.svidCacheMaxSize)
+	require.Equal(t, DefaultSVIDCacheMaxSize, cache.x509SvidCacheMaxSize)
 
 	// Zero for value for svidCacheMaxSize should set default value in
 	// cache.svidCacheMaxSize
 	cache = newTestLRUCacheWithConfig(0, clock.NewMock(t))
-	require.Equal(t, DefaultSVIDCacheMaxSize, cache.svidCacheMaxSize)
+	require.Equal(t, DefaultSVIDCacheMaxSize, cache.x509SvidCacheMaxSize)
 
 	// Custom value for svidCacheMaxSize should propagate properly
 	cache = newTestLRUCacheWithConfig(55, clock.NewMock(t))
-	require.Equal(t, 55, cache.svidCacheMaxSize)
+	require.Equal(t, 55, cache.x509SvidCacheMaxSize)
 }
 
 func BenchmarkLRUCacheGlobalNotification(b *testing.B) {
@@ -1315,12 +1291,12 @@ func BenchmarkLRUCacheGlobalNotification(b *testing.B) {
 func newTestLRUCache(t testing.TB) *LRUCache {
 	log, _ := test.NewNullLogger()
 	return NewLRUCache(log, spiffeid.RequireTrustDomainFromString("domain.test"), bundleV1,
-		telemetry.Blackhole{}, 0, 0, clock.NewMock(t))
+		telemetry.Blackhole{}, 0, clock.NewMock(t))
 }
 
 func newTestLRUCacheWithConfig(svidCacheMaxSize int, clk clock.Clock) *LRUCache {
 	log, _ := test.NewNullLogger()
-	return NewLRUCache(log, trustDomain1, bundleV1, telemetry.Blackhole{}, svidCacheMaxSize, svidCacheMaxSize, clk)
+	return NewLRUCache(log, trustDomain1, bundleV1, telemetry.Blackhole{}, svidCacheMaxSize, clk)
 }
 
 // numEntries should not be more than 12 digits
