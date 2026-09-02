@@ -19,7 +19,7 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.7.0@sha256:010d4b66aed389848b0694
 FROM --platform=${BUILDPLATFORM} base as builder
 ARG TAG
 ARG datadog_instrumentation=false
-ARG orchestrion_version=v1.11.0
+ARG orchestrion_version=v1.13.0
 ARG TARGETPLATFORM
 ARG TARGETARCH
 COPY --link --from=xx / /

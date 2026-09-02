@@ -123,7 +123,7 @@ endif
 
 PLATFORMS ?= linux/amd64,linux/arm64
 DATADOG_INSTRUMENTATION ?= false
-ORCHESTRION_VERSION ?= v1.11.0
+ORCHESTRION_VERSION ?= v1.13.0
 
 binaries := spire-server spire-agent oidc-discovery-provider
 datadog_image_targets := spire-server spire-agent
